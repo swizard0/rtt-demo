@@ -5,7 +5,8 @@ extern crate piston_window;
 #[macro_use] extern crate log;
 #[macro_use] extern crate clap;
 
-use std::{io, process};
+use std::{io, thread, process};
+use std::sync::mpsc;
 use std::path::PathBuf;
 
 use clap::Arg;
@@ -20,6 +21,11 @@ use piston_window::{
     Button,
     Key
 };
+
+mod comm;
+mod rtt_slave;
+
+use comm::{MasterReq, SlaveRep};
 
 fn main() {
     env_logger::init();
@@ -37,6 +43,8 @@ fn main() {
 enum Error {
     MissingParameter(&'static str),
     Piston(PistonError),
+    ThreadSpawn(io::Error),
+    ThreadJoin(Box<std::any::Any + Send + 'static>),
 }
 
 #[derive(Debug)]
@@ -65,7 +73,7 @@ fn run() -> Result<(), Error> {
     let assets_dir = matches.value_of("assets-dir")
         .ok_or(Error::MissingParameter("assets-dir"))?;
 
-    let opengl = OpenGL::V3_2;
+    let opengl = OpenGL::V4_1;
     let mut window: PistonWindow = WindowSettings::new("RTT demo", [SCREEN_WIDTH, SCREEN_HEIGHT])
         .exit_on_esc(true)
         .opengl(opengl)
@@ -80,6 +88,14 @@ fn run() -> Result<(), Error> {
             file: font_path.to_string_lossy().to_string(),
             error: e,
         }))?;
+
+    let (master_tx, slave_rx) = mpsc::channel();
+    let (slave_tx, master_rx) = mpsc::channel();
+
+    let slave = thread::Builder::new()
+        .name("RTT demo slave".to_string())
+        .spawn(move || rtt_slave::run(slave_rx, slave_tx))
+        .map_err(Error::ThreadSpawn)?;
 
     while let Some(event) = window.next() {
         let maybe_result = window.draw_2d(&event, |context, g2d| {
@@ -106,6 +122,9 @@ fn run() -> Result<(), Error> {
                 (),
         }
     }
+
+    let _ = master_tx.send(MasterReq::Terminate);
+    let () = slave.join().map_err(Error::ThreadJoin)?;
 
     Ok(())
 }
