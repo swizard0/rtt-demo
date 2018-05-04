@@ -16,12 +16,13 @@ use piston_window::{
     PistonWindow,
     WindowSettings,
     TextureSettings,
-    Viewport,
     Glyphs,
     Event,
     Input,
     Button,
     ButtonArgs,
+    ButtonState,
+    MouseButton,
     Motion,
     Key,
 };
@@ -30,6 +31,7 @@ mod common;
 mod rtt_slave;
 
 use common::{
+    Point,
     CircleArea,
     Field,
     FieldConfig,
@@ -65,7 +67,6 @@ enum PistonError {
 }
 
 const CONSOLE_HEIGHT: u32 = 32;
-const BORDER_WIDTH: u32 = 16;
 const SCREEN_WIDTH: u32 = 640;
 const SCREEN_HEIGHT: u32 = 480;
 
@@ -99,13 +100,6 @@ fn run() -> Result<(), Error> {
             error: e,
         }))?;
 
-    let field_config = FieldConfig::new(
-        SCREEN_WIDTH as f64,
-        SCREEN_HEIGHT as f64,
-    );
-    let mut field = Field::generate(field_config);
-    let mut cursor = None;
-
     let (master_tx, slave_rx) = mpsc::channel();
     let (slave_tx, master_rx) = mpsc::channel();
 
@@ -114,6 +108,7 @@ fn run() -> Result<(), Error> {
         .spawn(move || rtt_slave::run(slave_rx, slave_tx))
         .map_err(Error::ThreadSpawn)?;
 
+    let mut env = Env::new();
     while let Some(event) = window.next() {
         let maybe_result = window.draw_2d(&event, |context, g2d| {
             use piston_window::{clear, text, ellipse, Transformed};
@@ -128,15 +123,15 @@ fn run() -> Result<(), Error> {
                 g2d
             ).map_err(PistonError::DrawText)?;
 
-            if let Some(tr) = ViewportTranslator::new(&context.viewport) {
+            if let Some((_width, _height)) = context.viewport.map(|v| (v.draw_size[0], v.draw_size[1])) {
                 // draw start
                 ellipse(
                     [0.75, 0.75, 0.0, 1.0],
                     [
-                        tr.x(field.config.start_area.center.x) - field.config.start_area.radius,
-                        tr.y(field.config.start_area.center.y) - field.config.start_area.radius,
-                        field.config.start_area.radius * 2.,
-                        field.config.start_area.radius * 2.,
+                        env.field.config.start_area.center.x - env.field.config.start_area.radius,
+                        env.field.config.start_area.center.y - env.field.config.start_area.radius,
+                        env.field.config.start_area.radius * 2.,
+                        env.field.config.start_area.radius * 2.,
                     ],
                     context.transform,
                     g2d,
@@ -145,21 +140,21 @@ fn run() -> Result<(), Error> {
                 ellipse(
                     [0.2, 0.2, 1.0, 1.0],
                     [
-                        tr.x(field.config.finish_area.center.x) - field.config.finish_area.radius,
-                        tr.y(field.config.finish_area.center.y) - field.config.finish_area.radius,
-                        field.config.finish_area.radius * 2.,
-                        field.config.finish_area.radius * 2.,
+                        env.field.config.finish_area.center.x - env.field.config.finish_area.radius,
+                        env.field.config.finish_area.center.y - env.field.config.finish_area.radius,
+                        env.field.config.finish_area.radius * 2.,
+                        env.field.config.finish_area.radius * 2.,
                     ],
                     context.transform,
                     g2d,
                 );
                 // draw obstacles
-                for obstacle in field.obstacles.iter() {
+                for obstacle in env.field.obstacles.iter() {
                     ellipse(
                         [0.5, 1.0, 0.5, 1.0],
                         [
-                            tr.x(obstacle.center.x) - obstacle.radius,
-                            tr.y(obstacle.center.y) - obstacle.radius,
+                            obstacle.center.x - obstacle.radius,
+                            obstacle.center.y - obstacle.radius,
                             obstacle.radius * 2.,
                             obstacle.radius * 2.,
                         ],
@@ -168,13 +163,23 @@ fn run() -> Result<(), Error> {
                     );
                 }
                 // draw cursor
-                if let Some((cx, cy)) = cursor {
-                    ellipse(
-                        [0., 1.0, 0., 1.0],
-                        [cx - 5., cy - 5., 10., 10.,],
-                        context.transform,
-                        g2d,
-                    );
+                if let Some((mx, my)) = env.cursor {
+                    if let Some((cx, cy)) = env.obs_center {
+                        let radius = coords_radius(cx, cy, mx, my);
+                        ellipse(
+                            [1.0, 0., 0., 1.0],
+                            [cx - radius, cy - radius, radius * 2., radius * 2.,],
+                            context.transform,
+                            g2d,
+                        );
+                    } else {
+                        ellipse(
+                            [1.0, 0., 0., 1.0],
+                            [mx - 5., my - 5., 10., 10.,],
+                            context.transform,
+                            g2d,
+                        );
+                    }
                 }
             }
 
@@ -188,11 +193,13 @@ fn run() -> Result<(), Error> {
             Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::Q), .. })) =>
                 break,
             Event::Input(Input::Move(Motion::MouseCursor(x, y))) =>
-                cursor = Some((x, y)),
+                env.set_cursor(x, y),
             Event::Input(Input::Cursor(false)) =>
-                cursor = None,
-            Event::Input(Input::Cursor(true)) =>
-                cursor = Some((0., 0.)),
+                env.reset_cursor(),
+            Event::Input(Input::Button(ButtonArgs { button: Button::Mouse(MouseButton::Left), state: ButtonState::Release, .. })) =>
+                env.toggle_obs(),
+            Event::Input(Input::Resize(width, height)) =>
+                env.reset(width, height),
             _ =>
                 (),
         }
@@ -204,37 +211,65 @@ fn run() -> Result<(), Error> {
     Ok(())
 }
 
-struct ViewportTranslator {
-    scale_x: f64,
-    scale_y: f64,
-    min_x: f64,
-    min_y: f64,
+struct Env {
+    field: Field,
+    cursor: Option<(f64, f64)>,
+    obs_center: Option<(f64, f64)>,
 }
 
-impl ViewportTranslator {
-    fn new(viewport: &Option<Viewport>) -> Option<ViewportTranslator> {
-        let (w, h) = viewport
-            .map(|v| (v.draw_size[0], v.draw_size[1]))
-            .unwrap_or((SCREEN_WIDTH, SCREEN_HEIGHT));
-
-        if (w <= 2 * BORDER_WIDTH) || (h <= BORDER_WIDTH + CONSOLE_HEIGHT) {
-            None
-        } else {
-            let bounds = (0., 0., SCREEN_WIDTH as f64, SCREEN_HEIGHT as f64);
-            Some(ViewportTranslator {
-                scale_x: (w - BORDER_WIDTH - BORDER_WIDTH) as f64 / (bounds.2 - bounds.0),
-                scale_y: (h - BORDER_WIDTH - CONSOLE_HEIGHT) as f64 / (bounds.3 - bounds.1),
-                min_x: bounds.0,
-                min_y: bounds.1,
-            })
+impl Env {
+    fn new() -> Env {
+        Env {
+            field: Field::generate(FieldConfig::new(
+                0.,
+                CONSOLE_HEIGHT as f64,
+                SCREEN_WIDTH as f64,
+                SCREEN_HEIGHT as f64,
+            )),
+            cursor: None,
+            obs_center: None,
         }
     }
 
-    fn x(&self, x: f64) -> f64 {
-        (x - self.min_x) * self.scale_x + BORDER_WIDTH as f64
+    fn reset(&mut self, width: u32, height: u32) {
+        self.field = Field::generate(FieldConfig::new(
+            0.,
+            CONSOLE_HEIGHT as f64,
+            width as f64,
+            height as f64,
+        ));
+        self.cursor = None;
+        self.obs_center = None;
     }
 
-    fn y(&self, y: f64) -> f64 {
-        (y - self.min_y) * self.scale_y + CONSOLE_HEIGHT as f64
+    fn set_cursor(&mut self, x: f64, y: f64) {
+        self.cursor = if y < CONSOLE_HEIGHT as f64 {
+            None
+        } else {
+            Some((x, y))
+        }
     }
+
+    fn reset_cursor(&mut self) {
+        self.cursor = None;
+        self.obs_center = None;
+    }
+
+    fn toggle_obs(&mut self) {
+        if let Some((mx, my)) = self.cursor {
+            self.obs_center = if let Some((cx, cy)) = self.obs_center {
+                self.field.obstacles.push(CircleArea {
+                    center: Point { x: cx, y: cy, },
+                    radius: coords_radius(cx, cy, mx, my),
+                });
+                None
+            } else {
+                Some((mx, my))
+            };
+        }
+    }
+}
+
+fn coords_radius(xa: f64, ya: f64, xb: f64, yb: f64) -> f64 {
+    ((xb - xa) * (xb - xa) + (yb - ya) * (yb - ya)).sqrt()
 }

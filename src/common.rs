@@ -19,7 +19,9 @@ pub struct FieldConfig {
 }
 
 impl FieldConfig {
-    pub fn new(width: f64, height: f64) -> FieldConfig {
+    pub fn new(min_x: f64, min_y: f64, max_x: f64, max_y: f64) -> FieldConfig {
+        let width = max_x - min_x;
+        let height = max_y - min_y;
         let area_side = if width < height { width } else { height };
         let area_side = if area_side < 40. { area_side } else { 40. };
         let diameter = area_side / 2.;
@@ -30,15 +32,15 @@ impl FieldConfig {
         FieldConfig {
             start_area: CircleArea {
                 center: Point {
-                    x: padding + radius,
-                    y: padding + radius,
+                    x: min_x + padding + radius,
+                    y: min_y + padding + radius,
                 },
                 radius,
             },
             finish_area: CircleArea {
                 center: Point {
-                    x: width - padding - radius,
-                    y: height - padding - radius,
+                    x: max_x - padding - radius,
+                    y: max_y - padding - radius,
                 },
                 radius,
             },
