@@ -68,10 +68,11 @@ impl Field {
     }
 }
 
-pub enum MasterReq {
+pub enum MasterPacket {
+    Interrupt,
     Terminate,
 }
 
-pub enum SlaveRep {
+pub enum SlavePacket {
 
 }

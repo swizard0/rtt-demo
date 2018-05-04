@@ -35,8 +35,8 @@ use common::{
     CircleArea,
     Field,
     FieldConfig,
-    MasterReq,
-    SlaveRep,
+    MasterPacket,
+    SlavePacket,
 };
 
 fn main() {
@@ -108,7 +108,7 @@ fn run() -> Result<(), Error> {
         .spawn(move || rtt_slave::run(slave_rx, slave_tx))
         .map_err(Error::ThreadSpawn)?;
 
-    let mut env = Env::new();
+    let mut env = Env::new(master_tx, master_rx);
     while let Some(event) = window.next() {
         let maybe_result = window.draw_2d(&event, |context, g2d| {
             use piston_window::{clear, text, ellipse, Transformed};
@@ -116,7 +116,7 @@ fn run() -> Result<(), Error> {
 
             // draw menu
             text::Text::new_color([0.0, 1.0, 0.0, 1.0], 16).draw(
-                &format!("Mode: [ path ]; press <M> to switch mode, <C> to clear or <Q> to exit"),
+                &format!("<S> to solve, <D> to solve with debug, <C> to clear or <Q> to exit"),
                 &mut glyphs,
                 &context.draw_state,
                 context.transform.trans(5.0, 20.0),
@@ -192,6 +192,8 @@ fn run() -> Result<(), Error> {
         match event {
             Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::Q), .. })) =>
                 break,
+            Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::C), .. })) =>
+                env.clear(),
             Event::Input(Input::Move(Motion::MouseCursor(x, y))) =>
                 env.set_cursor(x, y),
             Event::Input(Input::Cursor(false)) =>
@@ -205,7 +207,7 @@ fn run() -> Result<(), Error> {
         }
     }
 
-    let _ = master_tx.send(MasterReq::Terminate);
+    let _ = env.tx.send(MasterPacket::Terminate);
     let () = slave.join().map_err(Error::ThreadJoin)?;
 
     Ok(())
@@ -215,10 +217,12 @@ struct Env {
     field: Field,
     cursor: Option<(f64, f64)>,
     obs_center: Option<(f64, f64)>,
+    tx: mpsc::Sender<MasterPacket>,
+    rx: mpsc::Receiver<SlavePacket>,
 }
 
 impl Env {
-    fn new() -> Env {
+    fn new(tx: mpsc::Sender<MasterPacket>, rx: mpsc::Receiver<SlavePacket>) -> Env {
         Env {
             field: Field::generate(FieldConfig::new(
                 0.,
@@ -228,6 +232,7 @@ impl Env {
             )),
             cursor: None,
             obs_center: None,
+            tx, rx,
         }
     }
 
@@ -238,8 +243,12 @@ impl Env {
             width as f64,
             height as f64,
         ));
-        self.cursor = None;
-        self.obs_center = None;
+        self.reset_cursor();
+    }
+
+    fn clear(&mut self) {
+        self.field.obstacles.clear();
+        self.reset_cursor();
     }
 
     fn set_cursor(&mut self, x: f64, y: f64) {

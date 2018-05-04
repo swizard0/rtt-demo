@@ -1,12 +1,18 @@
 use std::sync::mpsc;
 
-use super::common::{MasterReq, SlaveRep};
+use super::common::{MasterPacket, SlavePacket};
 
-pub fn run(rx: mpsc::Receiver<MasterReq>, tx: mpsc::Sender<SlaveRep>) {
+pub fn run(rx: mpsc::Receiver<MasterPacket>, tx: mpsc::Sender<SlavePacket>) {
+    run_idle(&rx, &tx);
+}
+
+fn run_idle(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>) {
     loop {
         match rx.recv() {
-            Ok(MasterReq::Terminate) =>
+            Ok(MasterPacket::Terminate) =>
                 break,
+            Ok(MasterPacket::Interrupt) =>
+                (),
             Err(mpsc::RecvError) =>
                 break,
         }
