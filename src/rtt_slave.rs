@@ -1,6 +1,6 @@
 use std::sync::mpsc;
 
-use super::comm::{MasterReq, SlaveRep};
+use super::common::{MasterReq, SlaveRep};
 
 pub fn run(rx: mpsc::Receiver<MasterReq>, tx: mpsc::Sender<SlaveRep>) {
     loop {

@@ -22,10 +22,10 @@ use piston_window::{
     Key
 };
 
-mod comm;
+mod common;
 mod rtt_slave;
 
-use comm::{MasterReq, SlaveRep};
+use common::{MasterReq, SlaveRep};
 
 fn main() {
     env_logger::init();
