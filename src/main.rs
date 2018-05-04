@@ -18,9 +18,12 @@ use piston_window::{
     TextureSettings,
     Viewport,
     Glyphs,
-    PressEvent,
+    Event,
+    Input,
     Button,
-    Key
+    ButtonArgs,
+    Motion,
+    Key,
 };
 
 mod common;
@@ -101,6 +104,7 @@ fn run() -> Result<(), Error> {
         SCREEN_HEIGHT as f64,
     );
     let mut field = Field::generate(field_config);
+    let mut cursor = None;
 
     let (master_tx, slave_rx) = mpsc::channel();
     let (slave_tx, master_rx) = mpsc::channel();
@@ -163,6 +167,15 @@ fn run() -> Result<(), Error> {
                         g2d,
                     );
                 }
+                // draw cursor
+                if let Some((cx, cy)) = cursor {
+                    ellipse(
+                        [0., 1.0, 0., 1.0],
+                        [cx - 5., cy - 5., 10., 10.,],
+                        context.transform,
+                        g2d,
+                    );
+                }
             }
 
             Ok(())
@@ -171,9 +184,15 @@ fn run() -> Result<(), Error> {
             let () = result.map_err(Error::Piston)?;
         }
 
-        match event.press_args() {
-            Some(Button::Keyboard(Key::Q)) =>
+        match event {
+            Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::Q), .. })) =>
                 break,
+            Event::Input(Input::Move(Motion::MouseCursor(x, y))) =>
+                cursor = Some((x, y)),
+            Event::Input(Input::Cursor(false)) =>
+                cursor = None,
+            Event::Input(Input::Cursor(true)) =>
+                cursor = Some((0., 0.)),
             _ =>
                 (),
         }
