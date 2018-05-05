@@ -111,7 +111,7 @@ fn run() -> Result<(), Error> {
     let mut env = Env::new(master_tx, master_rx);
     while let Some(event) = window.next() {
         let maybe_result = window.draw_2d(&event, |context, g2d| {
-            use piston_window::{clear, text, ellipse, Transformed};
+            use piston_window::{clear, text, ellipse, line, Transformed};
             clear([0.0, 0.0, 0.0, 1.0], g2d);
 
             // draw menu
@@ -161,6 +161,16 @@ fn run() -> Result<(), Error> {
                         context.transform,
                         g2d,
                     );
+                }
+                // draw solved route
+                if let Some(ref route) = env.route_solved {
+                    let mut route_iter = route.iter().cloned();
+                    if let Some(mut src) = route_iter.next() {
+                        for dst in route_iter {
+                            line([0., 1.0, 0., 1.0], 2., [src.x, src.y, dst.x, dst.y], context.transform, g2d);
+                            src = dst;
+                        }
+                    }
                 }
                 // draw cursor
                 if let Some((mx, my)) = env.cursor {
@@ -268,17 +278,21 @@ impl Env {
     }
 
     fn reset(&mut self, width: u32, height: u32) {
+        self.abort();
         self.field = Field::generate(FieldConfig::new(
             0.,
             CONSOLE_HEIGHT as f64,
             width as f64,
             height as f64,
         ));
+        self.route_solved = None;
         self.reset_cursor();
     }
 
     fn clear(&mut self) {
+        self.abort();
         self.field.obstacles.clear();
+        self.route_solved = None;
         self.reset_cursor();
     }
 
@@ -298,6 +312,7 @@ impl Env {
     fn toggle_obs(&mut self) {
         if let Some((mx, my)) = self.cursor {
             self.obs_center = if let Some((cx, cy)) = self.obs_center {
+                self.abort();
                 self.field.obstacles.push(CircleArea {
                     center: Point { x: cx, y: cy, },
                     radius: coords_radius(cx, cy, mx, my),

@@ -41,8 +41,8 @@ impl Trans {
     }
 
     fn goal_reached(&self, point: &Point) -> bool {
-        self.field.config.finish_area.center.sq_dist(point) <
-            self.field.config.finish_area.radius * self.field.config.finish_area.radius
+        let fp = &self.field.config.finish_area;
+        fp.center.sq_dist(point) < fp.radius * fp.radius
     }
 
     fn trans_root(&mut self, empty_rtt: EmptyRandomTree<Point>) -> Result<RttNodeFocus, !> {
@@ -153,9 +153,9 @@ fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, 
                 }
                 no_err((rtt, closest.0))
             }).unwrap();
-
             if trans.has_route(planner_closest.rtts_node(), &sample) {
-                planner_node = planner_closest.transition(|(rtt, node_ref): (RandomTree<_>, _)| {
+                planner_node = planner_closest.transition(|(mut rtt, node_ref): (RandomTree<_>, _)| {
+                    let node_ref = rtt.expand(node_ref, sample);
                     let goal_reached = trans.goal_reached(rtt.get_state(&node_ref));
                     no_err(RttNodeFocus { rtt, node_ref, goal_reached, })
                 }).unwrap();

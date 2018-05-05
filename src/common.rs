@@ -8,7 +8,7 @@ pub struct Point {
 
 impl Point {
     pub fn sq_dist(&self, other: &Point) -> f64 {
-        (self.x - other.x) * (self.x - other.x) + (self.y - other.y) * (self.y * other.y)
+        ((self.x - other.x) * (self.x - other.x)) + ((self.y - other.y) * (self.y - other.y))
     }
 }
 
