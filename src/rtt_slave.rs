@@ -18,10 +18,12 @@ fn run_idle(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>) {
     loop {
         match rx.recv() {
             Ok(MasterPacket::Solve(field)) =>
-                run_solve(rx, tx, field),
+                if run_solve(rx, tx, field) {
+                    break;
+                },
             Ok(MasterPacket::Terminate) =>
                 break,
-            Ok(MasterPacket::Interrupt) =>
+            Ok(MasterPacket::Abort) =>
                 (),
             Err(mpsc::RecvError) =>
                 break,
@@ -102,7 +104,7 @@ impl RttNodeFocus {
     }
 }
 
-fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, field: Field) {
+fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, field: Field) -> bool {
     let mut rng = rand::thread_rng();
 
     let planner = rtt::Planner::new(EmptyRandomTree::new());
@@ -114,11 +116,24 @@ fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, 
         if planner_node.rtt_node().goal_reached {
             let path = planner_node.into_path(RttNodeFocus::into_direct_path).unwrap();
             tx.send(SlavePacket::RouteDone(path)).ok();
-            return;
+            return false;
         }
 
         let mut planner_sample = planner_node.prepare_sample(RttNodeFocus::into_rtt).unwrap();
         loop {
+            match rx.try_recv() {
+                Ok(MasterPacket::Solve(..)) =>
+                    (),
+                Ok(MasterPacket::Terminate) =>
+                    return true,
+                Ok(MasterPacket::Abort) =>
+                    return false,
+                Err(mpsc::TryRecvError::Empty) =>
+                    (),
+                Err(mpsc::TryRecvError::Disconnected) =>
+                    return true,
+            }
+
             let sample = Point {
                 x: rng.gen_range(trans.field.config.field_area.0, trans.field.config.field_area.2),
                 y: rng.gen_range(trans.field.config.field_area.1, trans.field.config.field_area.3),

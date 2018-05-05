@@ -116,7 +116,7 @@ fn run() -> Result<(), Error> {
 
             // draw menu
             text::Text::new_color([0.0, 1.0, 0.0, 1.0], 16).draw(
-                &format!("<S> to solve, <D> to solve with debug, <C> to clear or <Q> to exit"),
+                &env.business.info_line(),
                 &mut glyphs,
                 &context.draw_state,
                 context.transform.trans(5.0, 20.0),
@@ -196,6 +196,8 @@ fn run() -> Result<(), Error> {
                 env.clear(),
             Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::S), .. })) =>
                 env.solve(),
+            Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::A), .. })) =>
+                env.abort(),
             Event::Input(Input::Move(Motion::MouseCursor(x, y))) =>
                 env.set_cursor(x, y),
             Event::Input(Input::Cursor(false)) =>
@@ -206,6 +208,10 @@ fn run() -> Result<(), Error> {
                 env.reset(width, height),
             _ =>
                 (),
+        }
+
+        if env.poll() {
+            break;
         }
     }
 
@@ -221,11 +227,25 @@ enum Business {
     SolveDebug,
 }
 
+impl Business {
+    fn info_line(&self) -> String {
+        match self {
+            &Business::Idle =>
+                "<S> to solve, <D> to solve with debug, <C> to clear or <Q> to exit".to_string(),
+            &Business::Solve =>
+                "[ solving in progress ] <A> to abort, <C> to clear or <Q> to exit".to_string(),
+            &Business::SolveDebug =>
+                "[ debug solving in progress ] <A> to abort, <C> to clear or <Q> to exit".to_string(),
+        }
+    }
+}
+
 struct Env {
     business: Business,
     field: Field,
     cursor: Option<(f64, f64)>,
     obs_center: Option<(f64, f64)>,
+    route_solved: Option<Vec<Point>>,
     tx: mpsc::Sender<MasterPacket>,
     rx: mpsc::Receiver<SlavePacket>,
 }
@@ -242,6 +262,7 @@ impl Env {
             )),
             cursor: None,
             obs_center: None,
+            route_solved: None,
             tx, rx,
         }
     }
@@ -290,10 +311,40 @@ impl Env {
 
     fn solve(&mut self) {
         if let Business::Idle = self.business {
-            let _ = self.tx.send(MasterPacket::Interrupt);
+            let _ = self.tx.send(MasterPacket::Abort);
             if self.tx.send(MasterPacket::Solve(self.field.clone())).is_ok() {
                 self.business = Business::Solve;
             }
+        }
+    }
+
+    fn abort(&mut self) {
+        match self.business {
+            Business::Idle =>
+                (),
+            Business::Solve | Business::SolveDebug => {
+                let _ = self.tx.send(MasterPacket::Abort);
+                self.business = Business::Idle;
+            },
+        }
+    }
+
+    fn poll(&mut self) -> bool {
+        match self.rx.try_recv() {
+            Ok(SlavePacket::RouteDone(route)) =>
+                match self.business {
+                    Business::Idle =>
+                        false,
+                    Business::Solve | Business::SolveDebug => {
+                        self.route_solved = Some(route);
+                        self.business = Business::Idle;
+                        false
+                    },
+                },
+            Err(mpsc::TryRecvError::Empty) =>
+                false,
+            Err(mpsc::TryRecvError::Disconnected) =>
+                true,
         }
     }
 }

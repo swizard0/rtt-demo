@@ -78,7 +78,7 @@ impl Field {
 
 pub enum MasterPacket {
     Solve(Field),
-    Interrupt,
+    Abort,
     Terminate,
 }
 
