@@ -151,7 +151,7 @@ fn run() -> Result<(), Error> {
                 // draw obstacles
                 for obstacle in env.field.obstacles.iter() {
                     ellipse(
-                        [0.5, 1.0, 0.5, 1.0],
+                        [1.0, 0.5, 0.5, 1.0],
                         [
                             obstacle.center.x - obstacle.radius,
                             obstacle.center.y - obstacle.radius,
@@ -200,13 +200,13 @@ fn run() -> Result<(), Error> {
         }
 
         match event {
-            Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::Q), .. })) =>
+            Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::Q), state: ButtonState::Release, .. })) =>
                 break,
-            Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::C), .. })) =>
+            Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::C), state: ButtonState::Release, .. })) =>
                 env.clear(),
-            Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::S), .. })) =>
+            Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::S), state: ButtonState::Release, .. })) =>
                 env.solve(),
-            Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::A), .. })) =>
+            Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::A), state: ButtonState::Release, .. })) =>
                 env.abort(),
             Event::Input(Input::Move(Motion::MouseCursor(x, y))) =>
                 env.set_cursor(x, y),

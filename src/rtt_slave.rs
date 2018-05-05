@@ -138,8 +138,7 @@ fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, 
                 x: rng.gen_range(trans.field.config.field_area.0, trans.field.config.field_area.2),
                 y: rng.gen_range(trans.field.config.field_area.1, trans.field.config.field_area.3),
             };
-            let planner_pick = planner_sample.sample(no_err).unwrap();
-            let planner_closest = planner_pick.nearest_node(|rtt: RandomTree<Point>| {
+            let planner_closest = planner_sample.closest_to_sample(|rtt: RandomTree<Point>| {
                 let mut closest;
                 {
                     let points = rtt.states();
