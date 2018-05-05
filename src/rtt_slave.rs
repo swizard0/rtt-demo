@@ -18,7 +18,11 @@ fn run_idle(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>) {
     loop {
         match rx.recv() {
             Ok(MasterPacket::Solve(field)) =>
-                if run_solve(rx, tx, field) {
+                if run_solve(rx, tx, field, false) {
+                    break;
+                },
+            Ok(MasterPacket::SolveDebug(field)) =>
+                if run_solve(rx, tx, field, true) {
                     break;
                 },
             Ok(MasterPacket::Terminate) =>
@@ -104,7 +108,7 @@ impl RttNodeFocus {
     }
 }
 
-fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, field: Field) -> bool {
+fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, field: Field, debug: bool) -> bool {
     let mut rng = rand::thread_rng();
 
     let planner = rtt::Planner::new(EmptyRandomTree::new());
@@ -123,6 +127,8 @@ fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, 
         loop {
             match rx.try_recv() {
                 Ok(MasterPacket::Solve(..)) =>
+                    (),
+                Ok(MasterPacket::SolveDebug(..)) =>
                     (),
                 Ok(MasterPacket::Terminate) =>
                     return true,

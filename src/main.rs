@@ -112,8 +112,76 @@ fn run() -> Result<(), Error> {
     while let Some(event) = window.next() {
         let maybe_result = window.draw_2d(&event, |context, g2d| {
             use piston_window::{clear, text, ellipse, line, Transformed};
+            // clear everything
             clear([0.0, 0.0, 0.0, 1.0], g2d);
 
+            // draw start
+            ellipse(
+                [0.75, 0.75, 0.0, 1.0],
+                [
+                    env.field.config.start_area.center.x - env.field.config.start_area.radius,
+                    env.field.config.start_area.center.y - env.field.config.start_area.radius,
+                    env.field.config.start_area.radius * 2.,
+                    env.field.config.start_area.radius * 2.,
+                ],
+                context.transform,
+                g2d,
+            );
+            // draw finish
+            ellipse(
+                [0.2, 0.2, 1.0, 1.0],
+                [
+                    env.field.config.finish_area.center.x - env.field.config.finish_area.radius,
+                    env.field.config.finish_area.center.y - env.field.config.finish_area.radius,
+                    env.field.config.finish_area.radius * 2.,
+                    env.field.config.finish_area.radius * 2.,
+                ],
+                context.transform,
+                g2d,
+            );
+            // draw obstacles
+            for obstacle in env.field.obstacles.iter() {
+                ellipse(
+                    [1.0, 0.5, 0.5, 1.0],
+                    [
+                        obstacle.center.x - obstacle.radius,
+                        obstacle.center.y - obstacle.radius,
+                        obstacle.radius * 2.,
+                        obstacle.radius * 2.,
+                    ],
+                    context.transform,
+                    g2d,
+                );
+            }
+            // draw solved route
+            if let Some(ref route) = env.route_solved {
+                let mut route_iter = route.iter().cloned();
+                if let Some(mut src) = route_iter.next() {
+                    for dst in route_iter {
+                        line([0., 1.0, 0., 1.0], 2., [src.x, src.y, dst.x, dst.y], context.transform, g2d);
+                        src = dst;
+                    }
+                }
+            }
+            // draw cursor
+            if let Some((mx, my)) = env.cursor {
+                if let Some((cx, cy)) = env.obs_center {
+                    let radius = coords_radius(cx, cy, mx, my);
+                    ellipse(
+                        [1.0, 0., 0., 1.0],
+                        [cx - radius, cy - radius, radius * 2., radius * 2.,],
+                        context.transform,
+                        g2d,
+                    );
+                } else {
+                    ellipse(
+                        [1.0, 0., 0., 1.0],
+                        [mx - 5., my - 5., 10., 10.,],
+                        context.transform,
+                        g2d,
+                    );
+                }
+            }
             // draw menu
             text::Text::new_color([0.0, 1.0, 0.0, 1.0], 16).draw(
                 &env.business.info_line(),
@@ -123,75 +191,6 @@ fn run() -> Result<(), Error> {
                 g2d
             ).map_err(PistonError::DrawText)?;
 
-            if let Some((_width, _height)) = context.viewport.map(|v| (v.draw_size[0], v.draw_size[1])) {
-                // draw start
-                ellipse(
-                    [0.75, 0.75, 0.0, 1.0],
-                    [
-                        env.field.config.start_area.center.x - env.field.config.start_area.radius,
-                        env.field.config.start_area.center.y - env.field.config.start_area.radius,
-                        env.field.config.start_area.radius * 2.,
-                        env.field.config.start_area.radius * 2.,
-                    ],
-                    context.transform,
-                    g2d,
-                );
-                // draw finish
-                ellipse(
-                    [0.2, 0.2, 1.0, 1.0],
-                    [
-                        env.field.config.finish_area.center.x - env.field.config.finish_area.radius,
-                        env.field.config.finish_area.center.y - env.field.config.finish_area.radius,
-                        env.field.config.finish_area.radius * 2.,
-                        env.field.config.finish_area.radius * 2.,
-                    ],
-                    context.transform,
-                    g2d,
-                );
-                // draw obstacles
-                for obstacle in env.field.obstacles.iter() {
-                    ellipse(
-                        [1.0, 0.5, 0.5, 1.0],
-                        [
-                            obstacle.center.x - obstacle.radius,
-                            obstacle.center.y - obstacle.radius,
-                            obstacle.radius * 2.,
-                            obstacle.radius * 2.,
-                        ],
-                        context.transform,
-                        g2d,
-                    );
-                }
-                // draw solved route
-                if let Some(ref route) = env.route_solved {
-                    let mut route_iter = route.iter().cloned();
-                    if let Some(mut src) = route_iter.next() {
-                        for dst in route_iter {
-                            line([0., 1.0, 0., 1.0], 2., [src.x, src.y, dst.x, dst.y], context.transform, g2d);
-                            src = dst;
-                        }
-                    }
-                }
-                // draw cursor
-                if let Some((mx, my)) = env.cursor {
-                    if let Some((cx, cy)) = env.obs_center {
-                        let radius = coords_radius(cx, cy, mx, my);
-                        ellipse(
-                            [1.0, 0., 0., 1.0],
-                            [cx - radius, cy - radius, radius * 2., radius * 2.,],
-                            context.transform,
-                            g2d,
-                        );
-                    } else {
-                        ellipse(
-                            [1.0, 0., 0., 1.0],
-                            [mx - 5., my - 5., 10., 10.,],
-                            context.transform,
-                            g2d,
-                        );
-                    }
-                }
-            }
 
             Ok(())
         });
@@ -206,6 +205,8 @@ fn run() -> Result<(), Error> {
                 env.clear(),
             Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::S), state: ButtonState::Release, .. })) =>
                 env.solve(),
+            Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::D), state: ButtonState::Release, .. })) =>
+                env.solve_debug(),
             Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::A), state: ButtonState::Release, .. })) =>
                 env.abort(),
             Event::Input(Input::Move(Motion::MouseCursor(x, y))) =>
@@ -329,6 +330,15 @@ impl Env {
             let _ = self.tx.send(MasterPacket::Abort);
             if self.tx.send(MasterPacket::Solve(self.field.clone())).is_ok() {
                 self.business = Business::Solve;
+            }
+        }
+    }
+
+    fn solve_debug(&mut self) {
+        if let Business::Idle = self.business {
+            let _ = self.tx.send(MasterPacket::Abort);
+            if self.tx.send(MasterPacket::SolveDebug(self.field.clone())).is_ok() {
+                self.business = Business::SolveDebug;
             }
         }
     }
