@@ -53,8 +53,34 @@ impl Trans {
         })
     }
 
-    fn has_route(&self, &(ref rtt, ref node_ref): &(RandomTree<Point>, NodeRef)) -> bool {
-        unimplemented!()
+    fn has_route(&self, &(ref rtt, ref node_ref): &(RandomTree<Point>, NodeRef), dst: &Point) -> bool {
+        let src = rtt.get_state(node_ref);
+        if src.sq_dist(dst) <= 0. {
+            return false;
+        }
+        let seg_v = Point { x: dst.x - src.x, y: dst.y - src.y, };
+        let seg_v_len = (seg_v.x * seg_v.x + seg_v.y * seg_v.y).sqrt();
+
+        for obstacle in self.field.obstacles.iter() {
+            let closest_point = {
+                let pt_v = Point { x: obstacle.center.x - src.x, y: obstacle.center.y - src.y, };
+                let seg_v_unit = Point { x: seg_v.x / seg_v_len, y: seg_v.y / seg_v_len, };
+                let proj = pt_v.x * seg_v_unit.x + pt_v.y * seg_v_unit.y;
+                if proj <= 0. {
+                    src.clone()
+                } else if proj >= seg_v_len {
+                    dst.clone()
+                } else {
+                    let proj_v = Point { x: seg_v_unit.x * proj, y: seg_v_unit.y * proj, };
+                    Point { x: proj_v.x + src.x, y: proj_v.y + src.y, }
+                }
+            };
+            if closest_point.sq_dist(&obstacle.center) < obstacle.radius * obstacle.radius {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
 
@@ -113,7 +139,7 @@ fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, 
                 no_err((rtt, closest.0))
             }).unwrap();
 
-            if trans.has_route(planner_closest.rtts_node()) {
+            if trans.has_route(planner_closest.rtts_node(), &sample) {
                 planner_node = planner_closest.transition(|(rtt, node_ref): (RandomTree<_>, _)| {
                     let goal_reached = trans.goal_reached(rtt.get_state(&node_ref));
                     no_err(RttNodeFocus { rtt, node_ref, goal_reached, })
