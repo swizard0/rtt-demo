@@ -6,6 +6,12 @@ pub struct Point {
     pub y: f64,
 }
 
+impl Point {
+    pub fn sq_dist(&self, other: &Point) -> f64 {
+        (self.x - other.x) * (self.x - other.x) + (self.y - other.y) * (self.y * other.y)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct CircleArea {
     pub center: Point,
@@ -16,6 +22,7 @@ pub struct CircleArea {
 pub struct FieldConfig {
     pub start_area: CircleArea,
     pub finish_area: CircleArea,
+    pub field_area: (f64, f64, f64, f64),
 }
 
 impl FieldConfig {
@@ -44,6 +51,7 @@ impl FieldConfig {
                 },
                 radius,
             },
+            field_area: (min_x, min_y, max_x, max_y),
         }
     }
 }
@@ -69,10 +77,11 @@ impl Field {
 }
 
 pub enum MasterPacket {
+    Solve(Field),
     Interrupt,
     Terminate,
 }
 
 pub enum SlavePacket {
-
+    RouteDone(Vec<Point>),
 }

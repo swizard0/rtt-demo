@@ -194,6 +194,8 @@ fn run() -> Result<(), Error> {
                 break,
             Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::C), .. })) =>
                 env.clear(),
+            Event::Input(Input::Button(ButtonArgs { button: Button::Keyboard(Key::S), .. })) =>
+                env.solve(),
             Event::Input(Input::Move(Motion::MouseCursor(x, y))) =>
                 env.set_cursor(x, y),
             Event::Input(Input::Cursor(false)) =>
@@ -213,7 +215,14 @@ fn run() -> Result<(), Error> {
     Ok(())
 }
 
+enum Business {
+    Idle,
+    Solve,
+    SolveDebug,
+}
+
 struct Env {
+    business: Business,
     field: Field,
     cursor: Option<(f64, f64)>,
     obs_center: Option<(f64, f64)>,
@@ -224,6 +233,7 @@ struct Env {
 impl Env {
     fn new(tx: mpsc::Sender<MasterPacket>, rx: mpsc::Receiver<SlavePacket>) -> Env {
         Env {
+            business: Business::Idle,
             field: Field::generate(FieldConfig::new(
                 0.,
                 CONSOLE_HEIGHT as f64,
@@ -275,6 +285,15 @@ impl Env {
             } else {
                 Some((mx, my))
             };
+        }
+    }
+
+    fn solve(&mut self) {
+        if let Business::Idle = self.business {
+            let _ = self.tx.send(MasterPacket::Interrupt);
+            if self.tx.send(MasterPacket::Solve(self.field.clone())).is_ok() {
+                self.business = Business::Solve;
+            }
         }
     }
 }
