@@ -30,7 +30,7 @@ impl FieldConfig {
         let width = max_x - min_x;
         let height = max_y - min_y;
         let area_side = if width < height { width } else { height };
-        let area_side = if area_side < 40. { area_side } else { 40. };
+        let area_side = if area_side < 80. { area_side } else { 80. };
         let diameter = area_side / 2.;
         let radius = diameter / 2.;
         let padding2 = diameter;
@@ -76,13 +76,29 @@ impl Field {
     }
 }
 
+#[derive(Clone)]
+pub enum SampleTry {
+    None,
+    Blocked(Point, Point),
+    Passable(Point, Point),
+}
+
+#[derive(Clone)]
+pub struct DebugImage {
+    pub tick_id: usize,
+    pub routes_segs: Vec<(Point, Point)>,
+    pub sample_seg: SampleTry,
+}
+
 pub enum MasterPacket {
     Solve(Field),
     SolveDebug(Field),
+    DebugTickAck(usize),
     Abort,
     Terminate,
 }
 
 pub enum SlavePacket {
     RouteDone(Vec<Point>),
+    DebugTick(DebugImage),
 }

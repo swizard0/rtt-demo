@@ -35,6 +35,8 @@ use common::{
     CircleArea,
     Field,
     FieldConfig,
+    DebugImage,
+    SampleTry,
     MasterPacket,
     SlavePacket,
 };
@@ -153,6 +155,20 @@ fn run() -> Result<(), Error> {
                     g2d,
                 );
             }
+            // draw debug image
+            if let Some(ref debug_image) = env.debug_image {
+                for &(ref src, ref dst) in debug_image.routes_segs.iter() {
+                    line([0.15, 0.15, 0., 1.0], 1., [src.x, src.y, dst.x, dst.y], context.transform, g2d);
+                }
+                match debug_image.sample_seg {
+                    SampleTry::None =>
+                        (),
+                    SampleTry::Blocked(ref src, ref dst) =>
+                        line([1.0, 0., 0., 1.0], 2., [src.x, src.y, dst.x, dst.y], context.transform, g2d),
+                    SampleTry::Passable(ref src, ref dst) =>
+                        line([0., 1.0, 0., 1.0], 2., [src.x, src.y, dst.x, dst.y], context.transform, g2d),
+                }
+            }
             // draw solved route
             if let Some(ref route) = env.route_solved {
                 let mut route_iter = route.iter().cloned();
@@ -226,7 +242,7 @@ fn run() -> Result<(), Error> {
         }
     }
 
-    let _ = env.tx.send(MasterPacket::Terminate);
+    env.tx.send(MasterPacket::Terminate).ok();
     let () = slave.join().map_err(Error::ThreadJoin)?;
 
     Ok(())
@@ -257,6 +273,7 @@ struct Env {
     cursor: Option<(f64, f64)>,
     obs_center: Option<(f64, f64)>,
     route_solved: Option<Vec<Point>>,
+    debug_image: Option<DebugImage>,
     tx: mpsc::Sender<MasterPacket>,
     rx: mpsc::Receiver<SlavePacket>,
 }
@@ -273,6 +290,7 @@ impl Env {
             )),
             cursor: None,
             obs_center: None,
+            debug_image: None,
             route_solved: None,
             tx, rx,
         }
@@ -287,6 +305,7 @@ impl Env {
             height as f64,
         ));
         self.route_solved = None;
+        self.debug_image = None;
         self.reset_cursor();
     }
 
@@ -294,6 +313,7 @@ impl Env {
         self.abort();
         self.field.obstacles.clear();
         self.route_solved = None;
+        self.debug_image = None;
         self.reset_cursor();
     }
 
@@ -327,7 +347,9 @@ impl Env {
 
     fn solve(&mut self) {
         if let Business::Idle = self.business {
-            let _ = self.tx.send(MasterPacket::Abort);
+            self.tx.send(MasterPacket::Abort).ok();
+            self.route_solved = None;
+            self.debug_image = None;
             if self.tx.send(MasterPacket::Solve(self.field.clone())).is_ok() {
                 self.business = Business::Solve;
             }
@@ -336,7 +358,9 @@ impl Env {
 
     fn solve_debug(&mut self) {
         if let Business::Idle = self.business {
-            let _ = self.tx.send(MasterPacket::Abort);
+            self.tx.send(MasterPacket::Abort).ok();
+            self.route_solved = None;
+            self.debug_image = None;
             if self.tx.send(MasterPacket::SolveDebug(self.field.clone())).is_ok() {
                 self.business = Business::SolveDebug;
             }
@@ -348,7 +372,7 @@ impl Env {
             Business::Idle =>
                 (),
             Business::Solve | Business::SolveDebug => {
-                let _ = self.tx.send(MasterPacket::Abort);
+                self.tx.send(MasterPacket::Abort).ok();
                 self.business = Business::Idle;
             },
         }
@@ -366,6 +390,12 @@ impl Env {
                         false
                     },
                 },
+            Ok(SlavePacket::DebugTick(debug_image)) => {
+                let to_ack = debug_image.tick_id;
+                self.debug_image = Some(debug_image);
+                self.tx.send(MasterPacket::DebugTickAck(to_ack)).ok();
+                false
+            },
             Err(mpsc::TryRecvError::Empty) =>
                 false,
             Err(mpsc::TryRecvError::Disconnected) =>

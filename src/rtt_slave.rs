@@ -1,4 +1,5 @@
 use std::sync::mpsc;
+use std::collections::HashSet;
 
 use rtt::{self, util::{no_err, rtt::vec_slist::{EmptyRandomTree, RandomTree, NodeRef}}};
 use rand::{self, Rng};
@@ -8,6 +9,8 @@ use super::common::{
     SlavePacket,
     Field,
     Point,
+    DebugImage,
+    SampleTry,
 };
 
 pub fn run(rx: mpsc::Receiver<MasterPacket>, tx: mpsc::Sender<SlavePacket>) {
@@ -25,6 +28,8 @@ fn run_idle(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>) {
                 if run_solve(rx, tx, field, true) {
                     break;
                 },
+            Ok(MasterPacket::DebugTickAck(..)) =>
+                (),
             Ok(MasterPacket::Terminate) =>
                 break,
             Ok(MasterPacket::Abort) =>
@@ -110,6 +115,12 @@ impl RttNodeFocus {
 
 fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, field: Field, debug: bool) -> bool {
     let mut rng = rand::thread_rng();
+    let mut debug_image = DebugImage {
+        tick_id: 0,
+        routes_segs: Vec::new(),
+        sample_seg: SampleTry::None,
+    };
+    let mut last_ack = 0;
 
     let planner = rtt::Planner::new(EmptyRandomTree::new());
 
@@ -123,6 +134,27 @@ fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, 
             return false;
         }
 
+        if debug {
+            debug_image.routes_segs.clear();
+            let mut visited: HashSet<(NodeRef, NodeRef)> = HashSet::new();
+
+            let rtt = &planner_node.rtt_node().rtt;
+            let states = rtt.states();
+            for (mut dst_node_ref, mut dst) in states.children {
+                for (src_node_ref, src) in rtt.path_iter(&dst_node_ref).skip(1) {
+                    let visited_key = (src_node_ref, dst_node_ref);
+                    if visited.contains(&visited_key) {
+                        break;
+                    } else {
+                        visited.insert(visited_key);
+                        debug_image.routes_segs.push((src.clone(), dst.clone()));
+                    }
+                    dst_node_ref = src_node_ref;
+                    dst = src;
+                }
+            }
+        }
+
         let mut planner_sample = planner_node.prepare_sample(RttNodeFocus::into_rtt).unwrap();
         loop {
             match rx.try_recv() {
@@ -130,6 +162,8 @@ fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, 
                     (),
                 Ok(MasterPacket::SolveDebug(..)) =>
                     (),
+                Ok(MasterPacket::DebugTickAck(ack)) =>
+                    last_ack = ack,
                 Ok(MasterPacket::Terminate) =>
                     return true,
                 Ok(MasterPacket::Abort) =>
@@ -158,7 +192,26 @@ fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, 
                 }
                 no_err((rtt, closest.0))
             }).unwrap();
-            if trans.has_route(planner_closest.rtts_node(), &sample) {
+
+            let has_route = trans.has_route(planner_closest.rtts_node(), &sample);
+
+            if debug {
+                let &(ref rtt, ref closest_ref) = planner_closest.rtts_node();
+                let src = rtt.get_state(closest_ref).clone();
+                let dst = sample;
+                debug_image.sample_seg = if has_route {
+                    SampleTry::Passable(src, dst)
+                } else {
+                    SampleTry::Blocked(src, dst)
+                };
+                if debug_image.tick_id == last_ack {
+                    debug_image.tick_id += 1;
+                    tx.send(SlavePacket::DebugTick(debug_image.clone())).ok();
+                }
+                ::std::thread::sleep(::std::time::Duration::from_millis(100));
+            }
+
+            if has_route {
                 planner_node = planner_closest.transition(|(mut rtt, node_ref): (RandomTree<_>, _)| {
                     let node_ref = rtt.expand(node_ref, sample);
                     let goal_reached = trans.goal_reached(rtt.get_state(&node_ref));
