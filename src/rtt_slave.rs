@@ -1,7 +1,7 @@
 use std::sync::mpsc;
 use std::collections::HashSet;
 
-use rtt::{self, util::{no_err, rtt::vec_slist::{EmptyRandomTree, RandomTree, NodeRef}}};
+use rtt::{self, util::{NeverError, rtt::vec_slist::{EmptyRandomTree, RandomTree, NodeRef}}};
 use rand::{self, Rng};
 
 use super::common::{
@@ -54,17 +54,19 @@ impl Trans {
         fp.center.sq_dist(point) < fp.radius * fp.radius
     }
 
-    fn trans_root(&mut self, empty_rtt: EmptyRandomTree<Point>) -> Result<RttNodeFocus, !> {
-        let rtt = empty_rtt.add_root(self.field.start);
+    fn trans_add_root(&mut self, empty_rtt: EmptyRandomTree<Point>) -> Result<RandomTree<Point>, NeverError> {
+        Ok(empty_rtt.add_root(self.field.start))
+    }
+
+    fn trans_root_node(&mut self, rtt: &mut RandomTree<Point>) -> Result<RttNodeFocus, NeverError> {
         let root_ref = rtt.root();
-        no_err(RttNodeFocus {
-            rtt,
+        Ok(RttNodeFocus {
             node_ref: root_ref,
             goal_reached: self.goal_reached(&self.field.start),
         })
     }
 
-    fn has_route(&self, &(ref rtt, ref node_ref): &(RandomTree<Point>, NodeRef), dst: &Point) -> bool {
+    fn has_route(&self, rtt: &RandomTree<Point>, node_ref: &NodeRef, dst: &Point) -> bool {
         let src = rtt.get_state(node_ref);
         if src.sq_dist(dst) <= 0. {
             return false;
@@ -96,20 +98,15 @@ impl Trans {
 }
 
 struct RttNodeFocus {
-    rtt: RandomTree<Point>,
     node_ref: NodeRef,
     goal_reached: bool,
 }
 
 impl RttNodeFocus {
-    fn into_direct_path(self) -> Result<Vec<Point>, !> {
-        let mut rev_path: Vec<_> = self.rtt.into_path(self.node_ref).collect();
+    fn into_direct_path(self, rtt: RandomTree<Point>) -> Result<Vec<Point>, NeverError> {
+        let mut rev_path: Vec<_> = rtt.into_path(self.node_ref).collect();
         rev_path.reverse();
-        no_err(rev_path)
-    }
-
-    fn into_rtt(self) -> Result<RandomTree<Point>, !> {
-        no_err(self.rtt)
+        Ok(rev_path)
     }
 }
 
@@ -121,15 +118,14 @@ fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, 
         sample_seg: SampleTry::None,
     };
     let mut last_ack = 0;
-
-    let planner = rtt::Planner::new(EmptyRandomTree::new());
-
     let mut trans = Trans::new(field);
-    let mut planner_node = planner.add_root(|empty_rtt| trans.trans_root(empty_rtt)).unwrap();
 
+    let planner = rtt::PlannerInit::new(EmptyRandomTree::new());
+    let planner = planner.add_root_ok(|empty_rtt| trans.trans_add_root(empty_rtt));
+    let mut planner_node = planner.root_node_ok(|rtt: &mut _| trans.trans_root_node(rtt));
     loop {
-        if planner_node.rtt_node().goal_reached {
-            let path = planner_node.into_path(RttNodeFocus::into_direct_path).unwrap();
+        if planner_node.node_ref().goal_reached {
+            let path = planner_node.into_path_ok(|rtt, focus: RttNodeFocus| focus.into_direct_path(rtt));;
             tx.send(SlavePacket::RouteDone(path)).ok();
             return false;
         }
@@ -138,7 +134,7 @@ fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, 
             debug_image.routes_segs.clear();
             let mut visited: HashSet<(NodeRef, NodeRef)> = HashSet::new();
 
-            let rtt = &planner_node.rtt_node().rtt;
+            let rtt = planner_node.rtt();
             let states = rtt.states();
             for (mut dst_node_ref, mut dst) in states.children {
                 for (src_node_ref, src) in rtt.path_iter(&dst_node_ref).skip(1) {
@@ -155,7 +151,7 @@ fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, 
             }
         }
 
-        let mut planner_sample = planner_node.prepare_sample(RttNodeFocus::into_rtt).unwrap();
+        let mut planner_ready_to_sample = planner_node.prepare_sample_ok(|_rtt: &mut _, _focus| Ok(()));
         loop {
             match rx.try_recv() {
                 Ok(MasterPacket::Solve(..)) =>
@@ -174,11 +170,14 @@ fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, 
                     return true,
             }
 
-            let sample = Point {
-                x: rng.gen_range(trans.field.config.field_area.0, trans.field.config.field_area.2),
-                y: rng.gen_range(trans.field.config.field_area.1, trans.field.config.field_area.3),
-            };
-            let planner_closest = planner_sample.closest_to_sample(|rtt: RandomTree<Point>| {
+            let planner_sample = planner_ready_to_sample.sample_ok(|_rtt: &mut _| {
+                Ok(Point {
+                    x: rng.gen_range(trans.field.config.field_area.0, trans.field.config.field_area.2),
+                    y: rng.gen_range(trans.field.config.field_area.1, trans.field.config.field_area.3),
+                })
+            });
+
+            let planner_closest = planner_sample.closest_to_sample_ok(|rtt: &mut RandomTree<Point>, sample: &Point| {
                 let mut closest;
                 {
                     let points = rtt.states();
@@ -190,15 +189,16 @@ fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, 
                         }
                     }
                 }
-                no_err((rtt, closest.0))
-            }).unwrap();
+                Ok(closest.0)
+            });
 
-            let has_route = trans.has_route(planner_closest.rtts_node(), &sample);
+            let has_route = trans.has_route(planner_closest.rtt(), planner_closest.node_ref(), planner_closest.sample());
 
             if debug {
-                let &(ref rtt, ref closest_ref) = planner_closest.rtts_node();
+                let rtt = planner_closest.rtt();
+                let closest_ref = planner_closest.node_ref();
                 let src = rtt.get_state(closest_ref).clone();
-                let dst = sample;
+                let dst = planner_closest.sample().clone();
                 debug_image.sample_seg = if has_route {
                     SampleTry::Passable(src, dst)
                 } else {
@@ -212,14 +212,14 @@ fn run_solve(rx: &mpsc::Receiver<MasterPacket>, tx: &mpsc::Sender<SlavePacket>, 
             }
 
             if has_route {
-                planner_node = planner_closest.transition(|(mut rtt, node_ref): (RandomTree<_>, _)| {
+                planner_node = planner_closest.has_transition_ok(|rtt: &mut RandomTree<Point>, node_ref: NodeRef, sample| {
                     let node_ref = rtt.expand(node_ref, sample);
                     let goal_reached = trans.goal_reached(rtt.get_state(&node_ref));
-                    no_err(RttNodeFocus { rtt, node_ref, goal_reached, })
-                }).unwrap();
+                    Ok(RttNodeFocus { node_ref, goal_reached, })
+                });
                 break;
             } else {
-                planner_sample = planner_closest.no_transition(|(rtt, _)| no_err(rtt)).unwrap();
+                planner_ready_to_sample = planner_closest.no_transition_ok(|_rtt: &mut _, _node_ref| Ok(()));
             }
         }
     }
